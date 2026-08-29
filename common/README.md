@@ -11,7 +11,7 @@ A lightweight, reusable collection of utilities and services
 for Node.js and TypeScript applications.
 
 [![npm version](https://img.shields.io/npm/v/@flutry/common.svg)](https://www.npmjs.com/package/@flutry/common)
-[![license](https://img.shields.io/npm/l/@flutry/common.svg)](LICENSE)
+[![license](https://img.shields.io/npm/l/@flutry/common.svg?cacheSeconds=1)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-ready-3178C6.svg)](https://www.typescriptlang.org/)
 
 </div>

@@ -1,0 +1,26 @@
+{
+  "name": "@flutry/router",
+  "version": "0.0.1",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flutry-HQ/package.git",
+    "directory": "router"
+  },
+  "author": "HEDI <admin@otamoon.hu>",
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@flutry/common": "latest"
+  }
+}

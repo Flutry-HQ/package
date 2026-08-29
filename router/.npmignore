@@ -1,0 +1,18 @@
+src/
+dist/**/*.map
+tests/
+coverage/
+.github/
+.vscode/
+.gitignore
+.npmignore
+tsconfig.json
+*.log
+!assets/
+!assets/logo.png
+# Package manager lockfiles
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lock
+bun.lockb

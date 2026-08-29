@@ -1,5 +1,5 @@
-import { HttpPlugin } from '@flutry/http';
-import { Ctx } from '../context/context';
+import { FastifyPluginAsync } from 'fastify';
+import { Ctx } from '../router/context';
 
 export type CtxHandler = (ctx: Ctx) => unknown | Promise<unknown>;
 
@@ -16,4 +16,4 @@ export interface RouteLoaderOptions {
   prefix?: string;
 }
 
-export type RoutePlugin = HttpPlugin;
+export type RoutePlugin = FastifyPluginAsync;

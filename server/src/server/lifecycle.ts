@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { HttpOptions } from '../types/types';
 import { logger } from '@flutry/common';
+import { HttpOptions } from '../types/server.typet';
 
 export function registerLifecycle(app: FastifyInstance, _options: HttpOptions): void {
   app.addHook('onRequest', onRequest);

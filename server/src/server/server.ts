@@ -1,11 +1,10 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
-
 import path from 'node:path';
 import { registerPlugins } from './plugins';
 import { registerLifecycle } from './lifecycle';
-import { HttpOptions } from '../types/types';
 import { logger } from '@flutry/common';
-import { RouteLoader } from '@flutry/router';
+import { RouteLoader } from '../router/loader';
+import { HttpOptions } from '../types/server.typet';
 
 export class HttpServer {
   private readonly startTime = performance.now();

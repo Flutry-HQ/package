@@ -1,16 +1,17 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { RouteLoaderOptions } from '../types/types';
+
 import { logger } from '@flutry/common';
-import { Router } from '../router/router';
-import { HttpInstance, type HttpError } from '@flutry/http';
+import { Router } from './router';
+import { FastifyInstance, type FastifyError } from 'fastify';
+import { RouteLoaderOptions } from '../types/router.types';
 
 export class RouteLoader {
   private loaded = false;
 
   public constructor(
-    private readonly app: HttpInstance,
+    private readonly app: FastifyInstance,
     private readonly options: RouteLoaderOptions,
   ) {}
 
@@ -162,7 +163,7 @@ export class RouteLoader {
       });
     });
 
-    this.app.setErrorHandler((error: HttpError, _request, reply) => {
+    this.app.setErrorHandler((error: FastifyError, _request, reply) => {
       logger.error(error as any);
 
       const statusCode = error.statusCode && error.statusCode >= 400 ? error.statusCode : 500;

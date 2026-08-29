@@ -1,6 +1,6 @@
-import { CtxHandler, HttpMethod, RouteDefinition } from '../types/types';
-import { Ctx } from '../context/context';
-import { HttpPlugin } from '@flutry/http';
+import { FastifyPluginAsync } from 'fastify';
+import { CtxHandler, HttpMethod, RouteDefinition } from '../types/router.types';
+import { Ctx } from './context';
 
 export abstract class Router {
   private readonly routes: RouteDefinition[] = [];
@@ -41,7 +41,7 @@ export abstract class Router {
     });
   }
 
-  public plugin(): HttpPlugin {
+  public plugin(): FastifyPluginAsync {
     const routes = this.routes;
 
     return async (app): Promise<void> => {

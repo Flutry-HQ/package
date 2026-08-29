@@ -1,9 +1,9 @@
-import { HttpReply, HttpRequest } from '@flutry/http';
+import { FastifyReply, FastifyRequest } from 'fastify';
 
 export class Ctx {
   public constructor(
-    public readonly req: HttpRequest,
-    public readonly reply: HttpReply,
+    public readonly req: FastifyRequest,
+    public readonly reply: FastifyReply,
   ) {}
 
   public get params(): unknown {
@@ -18,15 +18,15 @@ export class Ctx {
     return this.req.query;
   }
 
-  public send(data: unknown, status = 200): HttpReply {
+  public send(data: unknown, status = 200): FastifyReply {
     return this.reply.code(status).send(data);
   }
 
-  public status(code: number): HttpReply {
+  public status(code: number): FastifyReply {
     return this.reply.code(code);
   }
 
-  public redirect(url: string, code = 302): HttpReply {
+  public redirect(url: string, code = 302): FastifyReply {
     return this.reply.redirect(url, code);
   }
 
@@ -40,11 +40,11 @@ export class Ctx {
     return value;
   }
 
-  public setHeader(name: string, value: string): HttpReply {
+  public setHeader(name: string, value: string): FastifyReply {
     return this.reply.header(name, value);
   }
 
-  public end(): HttpReply {
+  public end(): FastifyReply {
     return this.reply.send();
   }
 }

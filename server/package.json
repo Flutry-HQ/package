@@ -1,5 +1,5 @@
 {
-  "name": "@flutry/router",
+  "name": "@flutry/server",
   "version": "0.0.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,7 +13,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Flutry-HQ/package.git",
-    "directory": "router"
+    "directory": "server"
   },
   "author": "HEDI <admin@otamoon.hu>",
   "devDependencies": {
@@ -21,6 +21,9 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@flutry/common": "latest"
+    "@fastify/compress": "^9.2.0",
+    "@fastify/helmet": "^13.1.1",
+    "@flutry/common": "latest",
+    "fastify": "^5.12.1"
   }
 }

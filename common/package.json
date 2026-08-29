@@ -10,6 +10,12 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flutry-HQ/package.git",
+    "directory": "common"
+  },
+  "author": "HEDI <admin@otamoon.hu>",
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.3.0",

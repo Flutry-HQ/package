@@ -1,3 +1,7 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
 import type { FastifyInstance } from 'fastify';
 import { Server, type ServerOptions } from 'socket.io';
 import { logger } from '@flutry/common';
@@ -104,6 +108,66 @@ export class Socket {
 }
 
 /**
+ * Loads every TypeScript and JavaScript file from
+ * src/utils/socket and all of its subdirectories.
+ *
+ * Files are imported after the Socket.IO instance has been
+ * initialized, allowing them to use getSocket() safely.
+ */
+async function loadSocketFolder(directory: string): Promise<void> {
+  const entries = await fs.readdir(directory, {
+    withFileTypes: true,
+  });
+
+  for (const entry of entries) {
+    const filePath = path.join(directory, entry.name);
+
+    /**
+     * Load files from nested directories recursively.
+     */
+    if (entry.isDirectory()) {
+      await loadSocketFolder(filePath);
+      continue;
+    }
+
+    /**
+     * Only load TypeScript and JavaScript files.
+     */
+    if (!entry.isFile() || (!entry.name.endsWith('.ts') && !entry.name.endsWith('.js'))) {
+      continue;
+    }
+
+    /**
+     * Import the socket file.
+     *
+     * Importing the module automatically executes its code,
+     * allowing it to register Socket.IO events.
+     */
+    await import(pathToFileURL(filePath).href);
+
+    logger.info(`Loaded Socket.IO file: ${path.relative(process.cwd(), filePath)}`);
+  }
+}
+
+/**
+ * Loads the application's Socket.IO utilities.
+ *
+ * The src/utils/socket folder is optional.
+ * If the folder does not exist, Socket.IO continues to work normally.
+ */
+async function loadSocketUtils(): Promise<void> {
+  const socketDirectory = path.resolve(process.cwd(), 'src', 'utils', 'socket');
+
+  try {
+    await fs.access(socketDirectory);
+  } catch {
+    return;
+  }
+
+  await loadSocketFolder(socketDirectory);
+}
+
+/**
  * Registers and initializes Socket.IO for the HTTP server.
  *
  * When Socket.IO is disabled through the HttpServer options,
@@ -113,7 +177,7 @@ export class Socket {
  * @param options Flutry HTTP server options.
  * @returns The initialized Socket instance or null when disabled.
  */
-export function registerSocket(app: FastifyInstance, options: HttpOptions): Socket | null {
+export async function registerSocket(app: FastifyInstance, options: HttpOptions): Promise<Socket | null> {
   /**
    * Socket.IO is explicitly disabled.
    * Make sure a previous global instance is not kept alive.
@@ -133,6 +197,14 @@ export function registerSocket(app: FastifyInstance, options: HttpOptions): Sock
    * the same Socket.IO server through getSocket().
    */
   socketInstance = new Socket(app, options.socket);
+
+  /**
+   * Load every file from src/utils/socket.
+   *
+   * Socket.IO has already been initialized at this point,
+   * so every loaded file can safely call getSocket().
+   */
+  await loadSocketUtils();
 
   return socketInstance;
 }
@@ -158,13 +230,12 @@ export function getSocket(): Socket {
 }
 
 /**
- * Returns the underlying Socket.IO Server instance.
+ * Sends an event to all clients connected to a specific Socket.IO room.
  *
- * This is a convenience helper for cases where direct access
- * to the Socket.IO API is required.
- *
- * @throws Error when Socket.IO has not been initialized.
+ * @param room Socket.IO room name.
+ * @param event Event name.
+ * @param payload Data sent with the event.
  */
-export function getIO(): Server {
-  return getSocket().instance;
+export function sendRoom(room: string, event: string, payload: any): void {
+  getSocket().instance.to(room).emit(event, payload);
 }

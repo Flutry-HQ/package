@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import jsonwebtoken, { Algorithm, JwtPayload, JsonWebTokenError, TokenExpiredError, NotBeforeError } from 'jsonwebtoken';
 import parseDuration from 'parse-duration';
 import crypto from 'crypto';

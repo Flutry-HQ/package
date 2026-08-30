@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.jwt = exports.JWTService = void 0;
+require("dotenv/config");
 const jsonwebtoken_1 = __importStar(require("jsonwebtoken"));
 const parse_duration_1 = __importDefault(require("parse-duration"));
 const crypto_1 = __importDefault(require("crypto"));

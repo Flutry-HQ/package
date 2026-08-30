@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { JwtPayload } from 'jsonwebtoken';
 /**
  * Custom data stored inside a JWT payload.

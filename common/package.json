@@ -1,6 +1,6 @@
 {
   "name": "@flutry/common",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "Apache-2.0",
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "argon2": "^0.45.1",
+    "dotenv": "^17.4.2",
     "jsonwebtoken": "^9.0.3",
     "parse-duration": "^2.1.8",
     "winston": "^3.19.0",

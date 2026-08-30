@@ -4,3 +4,4 @@ export { Router } from './router/router';
 export { RouteLoader } from './router/loader';
 export { Ctx } from './router/context';
 export type { CtxHandler, RouteDefinition, HttpMethod, RouteLoaderOptions, RoutePlugin } from './types/router.types';
+export { Socket, registerSocket } from './socket.io/socket.io';

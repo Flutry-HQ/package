@@ -19,7 +19,7 @@ export class RouteLoader {
     if (this.loaded) {
       return;
     }
-    logger.info(`=====================================`);
+    logger.info(`===============================================`);
     const directory = path.resolve(this.options.directory);
 
     await this.scan(directory, '');

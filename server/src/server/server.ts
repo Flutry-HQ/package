@@ -6,18 +6,20 @@ import { logger } from '@flutry/common';
 import { RouteLoader } from '../router/loader';
 import { HttpOptions } from '../types/server.typet';
 
+import { registerSocket, Socket } from '../socket.io/socket.io';
+
 export class HttpServer {
   private readonly startTime = performance.now();
 
   private readonly routeLoader: RouteLoader;
 
   public readonly app: FastifyInstance;
+  public readonly socket: Socket | null;
 
-  public constructor(
-    options: HttpOptions = {
-      prefix: '',
-    },
-  ) {
+  private readonly options: HttpOptions | null;
+
+  public constructor(options: HttpOptions) {
+    this.options = options;
     const fastifyOptions: FastifyServerOptions = {
       trustProxy: options.trustProxy ?? true,
       logger: options.logger ?? false,
@@ -32,6 +34,8 @@ export class HttpServer {
     });
 
     registerPlugins(this.app, options);
+
+    this.socket = registerSocket(this.app, options);
 
     registerLifecycle(this.app, options);
   }
@@ -49,11 +53,22 @@ export class HttpServer {
     });
 
     const startupTime = performance.now() - this.startTime;
-    logger.info(`=====================================`);
-    logger.info(`🚀 Flutry Server ${process.env.NODE_ENV}`);
-    logger.info(`⏰ Start Time: ${startupTime.toFixed(2)}ms`);
-    logger.info(`🌐 ${address}`);
-    logger.info(`=====================================`);
+    logger.info(`===============================================`);
+    logger.info(`🚀 Flutry Server v${process.env.npm_package_version ?? 'unknown'}`);
+    logger.info(`-----------------------------------------------`);
+    logger.info(`📦 Environment: ${process.env.NODE_ENV ?? 'development'}`);
+    logger.info(`🌐 Address: ${address}`);
+    logger.info(`⏰ Startup: ${startupTime.toFixed(2)}ms`);
+    logger.info(`🛡️ Trust Proxy: ${this.options?.trustProxy ?? false}`);
+
+    if (this.socket?.isRunning) {
+      logger.info(`🔌 Socket.IO: RUNNING`);
+    } else {
+      logger.info(`🔌 Socket.IO: DISABLED`);
+    }
+    logger.info(`-----------------------------------------------`);
+
+    logger.info(`===============================================`);
     return address;
   }
 

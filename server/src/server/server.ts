@@ -7,7 +7,7 @@ import { logger } from '@flutry/common';
 import { RouteLoader } from '../router/loader';
 import { HttpOptions } from '../types/server.typet';
 
-import { registerSocket, Socket } from '../socket.io/socket.io';
+import { loadSocketUtils, registerSocket, Socket } from '../socket.io/socket.io';
 
 /**
  * Main HTTP server implementation for the Flutry framework.
@@ -71,7 +71,8 @@ export class HttpServer {
    * - Socket.IO
    * - Lifecycle handlers
    *
-   * Routes themselves are loaded later when listen() is called.
+   * Routes and Socket.IO utility files are loaded later
+   * when listen() is called.
    *
    * @param options HTTP server configuration.
    */
@@ -93,10 +94,6 @@ export class HttpServer {
 
     /**
      * Initialize the route loader.
-     *
-     * Routes are automatically discovered from:
-     *
-     * <project>/src/routes
      */
     this.routeLoader = new RouteLoader(this.app, {
       directory: path.resolve(process.cwd(), 'src', 'routes'),
@@ -112,8 +109,8 @@ export class HttpServer {
     /**
      * Initialize Socket.IO when it is enabled.
      *
-     * The Socket instance is stored on the HttpServer so
-     * applications can access it through server.socket.
+     * The Socket instance is available immediately through
+     * getSocket() after this point.
      */
     this.socket = registerSocket(this.app, options);
 
@@ -126,9 +123,8 @@ export class HttpServer {
   /**
    * Starts the Flutry HTTP server.
    *
-   * Routes are loaded before Fastify starts accepting requests.
-   * After the server starts successfully, startup information
-   * is written to the Flutry logger.
+   * Routes and Socket.IO utility files are loaded before
+   * Fastify starts accepting requests.
    *
    * @param port Port the HTTP server should listen on.
    * @param host Host/interface the HTTP server should bind to.
@@ -138,11 +134,22 @@ export class HttpServer {
    * @throws If route loading or server startup fails.
    */
   public async listen(port: number, host = '0.0.0.0'): Promise<string> {
-    /*
-     * Routes must be registered before Fastify starts
-     * accepting incoming requests.
+    /**
+     * Load application routes before starting the server.
      */
     await this.routeLoader.load();
+
+    /**
+     * Load Socket.IO utility files only when
+     * Socket.IO is enabled.
+     *
+     * At this point the Socket instance has already
+     * been initialized by the constructor, so files
+     * inside src/utils/socket can safely call getSocket().
+     */
+    if (this.socket) {
+      await loadSocketUtils();
+    }
 
     /**
      * Start the underlying Fastify HTTP server.
@@ -161,17 +168,11 @@ export class HttpServer {
      * Log server startup information.
      */
     logger.info(`===============================================`);
-
     logger.info(`🚀 Flutry Server v${process.env.npm_package_version ?? 'unknown'}`);
-
     logger.info(`-----------------------------------------------`);
-
     logger.info(`📦 Environment: ${process.env.NODE_ENV ?? 'development'}`);
-
     logger.info(`🌐 Address: ${address}`);
-
     logger.info(`⏰ Startup: ${startupTime.toFixed(2)}ms`);
-
     logger.info(`🛡️ Trust Proxy: ${this.options?.trustProxy ?? false}`);
 
     /**
@@ -184,7 +185,6 @@ export class HttpServer {
     }
 
     logger.info(`-----------------------------------------------`);
-
     logger.info(`===============================================`);
 
     return address;
@@ -192,14 +192,6 @@ export class HttpServer {
 
   /**
    * Gracefully shuts down the HTTP server.
-   *
-   * Fastify closes the underlying server and executes
-   * registered shutdown lifecycle handlers.
-   *
-   * Socket.IO is also closed as part of its registered
-   * lifecycle handling.
-   *
-   * @throws If the Fastify server cannot be closed cleanly.
    */
   public async close(): Promise<void> {
     await this.app.close();

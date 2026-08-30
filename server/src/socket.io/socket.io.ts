@@ -123,7 +123,7 @@ async function loadSocketFolder(directory: string): Promise<void> {
     const filePath = path.join(directory, entry.name);
 
     /**
-     * Load files from nested directories recursively.
+     * Recursively load nested socket directories.
      */
     if (entry.isDirectory()) {
       await loadSocketFolder(filePath);
@@ -150,12 +150,12 @@ async function loadSocketFolder(directory: string): Promise<void> {
 }
 
 /**
- * Loads the application's Socket.IO utilities.
+ * Loads the application's Socket.IO utility files.
  *
- * The src/utils/socket folder is optional.
- * If the folder does not exist, Socket.IO continues to work normally.
+ * The src/utils/socket directory is optional.
+ * If the directory does not exist, Socket.IO continues normally.
  */
-async function loadSocketUtils(): Promise<void> {
+export async function loadSocketUtils(): Promise<void> {
   const socketDirectory = path.resolve(process.cwd(), 'src', 'utils', 'socket');
 
   try {
@@ -170,17 +170,17 @@ async function loadSocketUtils(): Promise<void> {
 /**
  * Registers and initializes Socket.IO for the HTTP server.
  *
- * When Socket.IO is disabled through the HttpServer options,
- * no Socket.IO instance is created.
+ * Socket.IO initialization itself is synchronous.
+ * Socket utility files are loaded separately through
+ * loadSocketUtils() before the HTTP server starts.
  *
  * @param app Fastify application instance.
  * @param options Flutry HTTP server options.
  * @returns The initialized Socket instance or null when disabled.
  */
-export async function registerSocket(app: FastifyInstance, options: HttpOptions): Promise<Socket | null> {
+export function registerSocket(app: FastifyInstance, options: HttpOptions): Socket | null {
   /**
    * Socket.IO is explicitly disabled.
-   * Make sure a previous global instance is not kept alive.
    */
   if (options.socket === false) {
     socketInstance = null;
@@ -192,19 +192,8 @@ export async function registerSocket(app: FastifyInstance, options: HttpOptions)
 
   /**
    * Initialize Socket.IO and store the instance globally.
-   *
-   * This allows other parts of the application to access
-   * the same Socket.IO server through getSocket().
    */
   socketInstance = new Socket(app, options.socket);
-
-  /**
-   * Load every file from src/utils/socket.
-   *
-   * Socket.IO has already been initialized at this point,
-   * so every loaded file can safely call getSocket().
-   */
-  await loadSocketUtils();
 
   return socketInstance;
 }

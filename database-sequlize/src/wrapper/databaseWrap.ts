@@ -1,19 +1,34 @@
 import { CreateOptions, DestroyOptions, FindOptions, Model, ModelStatic, Sequelize, Transaction, UpdateOptions, Utils } from 'sequelize';
 
 /**
- * Common database operations for Sequelize models.
+ * @deprecated
+ * This database wrapper is deprecated and will be removed in a future version.
  *
- * The helper methods wrap frequently used Sequelize operations and
- * automatically convert model instances into plain JavaScript objects
- * where applicable.
+ * Use the native Sequelize Model API directly instead.
+ *
+ * @see https://sequelize.org/docs/v6/core-concepts/model-basics/
+ *
+ * Example:
+ * ```ts
+ * const users = await User.findAll();
+ * ```
  */
 export class Database {
   /**
    * Finds all records matching the provided options.
    *
-   * @param model Sequelize model to query.
-   * @param options Optional Sequelize query options.
-   * @returns An array of plain JavaScript objects.
+   * @deprecated Use the native Sequelize `Model.findAll()` method instead.
+   *
+   * @example
+   * ```ts
+   * const users = await User.findAll({
+   *   where: {
+   *     active: true,
+   *   },
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
    */
   static async findAll<T extends Model>(model: ModelStatic<T>, options?: FindOptions<T['_attributes']>): Promise<object[]> {
     const results = await model.findAll(options);
@@ -24,9 +39,18 @@ export class Database {
   /**
    * Finds the first record matching the provided options.
    *
-   * @param model Sequelize model to query.
-   * @param options Optional Sequelize query options.
-   * @returns A plain JavaScript object or `null` when no record is found.
+   * @deprecated Use the native Sequelize `Model.findOne()` method instead.
+   *
+   * @example
+   * ```ts
+   * const user = await User.findOne({
+   *   where: {
+   *     id: userId,
+   *   },
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-finders/
    */
   static async findOne<T extends Model>(model: ModelStatic<T>, options?: FindOptions<T['_attributes']>): Promise<object | null> {
     const result = await model.findOne(options);
@@ -37,10 +61,14 @@ export class Database {
   /**
    * Finds a record by its primary key.
    *
-   * @param model Sequelize model to query.
-   * @param identifier Primary key value.
-   * @param options Optional Sequelize query options excluding `where`.
-   * @returns A plain JavaScript object or `null` when no record is found.
+   * @deprecated Use the native Sequelize `Model.findByPk()` method instead.
+   *
+   * @example
+   * ```ts
+   * const user = await User.findByPk(userId);
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-finders/
    */
   static async findByPk<T extends Model>(
     model: ModelStatic<T>,
@@ -55,9 +83,20 @@ export class Database {
   /**
    * Checks whether at least one record matches the provided options.
    *
-   * @param model Sequelize model to query.
-   * @param options Sequelize query options.
-   * @returns `true` when a matching record exists, otherwise `false`.
+   * @deprecated Use the native Sequelize `Model.findOne()` method instead.
+   *
+   * @example
+   * ```ts
+   * const user = await User.findOne({
+   *   where: {
+   *     email: 'test@example.com',
+   *   },
+   * });
+   *
+   * const exists = user !== null;
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-finders/
    */
   static async exists<T extends Model>(model: ModelStatic<T>, options: FindOptions<T['_attributes']>): Promise<boolean> {
     return (
@@ -71,10 +110,17 @@ export class Database {
   /**
    * Creates a new record.
    *
-   * @param model Sequelize model to use.
-   * @param values Values used to create the record.
-   * @param options Optional Sequelize creation options.
-   * @returns The created record as a plain JavaScript object.
+   * @deprecated Use the native Sequelize `Model.create()` method instead.
+   *
+   * @example
+   * ```ts
+   * const user = await User.create({
+   *   username: 'example',
+   *   email: 'test@example.com',
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
    */
   static async create<T extends Model>(
     model: ModelStatic<T>,
@@ -89,10 +135,23 @@ export class Database {
   /**
    * Updates records matching the provided options.
    *
-   * @param model Sequelize model to update.
-   * @param values Values to update.
-   * @param options Sequelize update options.
-   * @returns The updated records as plain JavaScript objects.
+   * @deprecated Use the native Sequelize `Model.update()` method instead.
+   *
+   * @example
+   * ```ts
+   * await User.update(
+   *   {
+   *     active: false,
+   *   },
+   *   {
+   *     where: {
+   *       id: userId,
+   *     },
+   *   },
+   * );
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
    */
   static async update<T extends Model>(
     model: ModelStatic<T>,
@@ -118,9 +177,18 @@ export class Database {
   /**
    * Deletes records matching the provided options.
    *
-   * @param model Sequelize model to delete from.
-   * @param options Sequelize destroy options.
-   * @returns The number of deleted records.
+   * @deprecated Use the native Sequelize `Model.destroy()` method instead.
+   *
+   * @example
+   * ```ts
+   * await User.destroy({
+   *   where: {
+   *     id: userId,
+   *   },
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
    */
   static async destroy<T extends Model>(model: ModelStatic<T>, options: DestroyOptions<T['_creationAttributes']>): Promise<number> {
     return model.destroy(options);
@@ -129,9 +197,18 @@ export class Database {
   /**
    * Counts records matching the provided options.
    *
-   * @param model Sequelize model to query.
-   * @param options Optional Sequelize query options.
-   * @returns The number of matching records.
+   * @deprecated Use the native Sequelize `Model.count()` method instead.
+   *
+   * @example
+   * ```ts
+   * const count = await User.count({
+   *   where: {
+   *     active: true,
+   *   },
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
    */
   static async count<T extends Model>(model: ModelStatic<T>, options?: FindOptions): Promise<number> {
     return model.count(options);
@@ -140,12 +217,23 @@ export class Database {
   /**
    * Executes operations inside a Sequelize transaction.
    *
-   * The transaction is automatically committed when the callback
-   * completes successfully and rolled back when it throws an error.
+   * @deprecated Use the native Sequelize transaction API instead.
    *
-   * @param sequelize Sequelize instance used for the transaction.
-   * @param callback Function containing the transactional operations.
-   * @returns The value returned by the transaction callback.
+   * @example
+   * ```ts
+   * await sequelize.transaction(async (transaction) => {
+   *   await User.create(
+   *     {
+   *       username: 'example',
+   *     },
+   *     {
+   *       transaction,
+   *     },
+   *   );
+   * });
+   * ```
+   *
+   * @see https://sequelize.org/docs/v6/other-topics/transactions/
    */
   static async transaction<T>(sequelize: Sequelize, callback: (transaction: Transaction) => Promise<T>): Promise<T> {
     return sequelize.transaction(callback);
@@ -153,14 +241,10 @@ export class Database {
 }
 
 /**
- * Functional exports for common database operations.
+ * @deprecated
+ * These helpers are deprecated and will be removed in a future version.
+ * Use the native Sequelize Model API directly instead.
  *
- * These exports allow database helpers to be used directly without
- * accessing the `Database` class.
- *
- * @example
- * ```ts
- * import { findOne, create } from '@flutry/database-sequelize';
- * ```
+ * @see https://sequelize.org/docs/v6/core-concepts/model-basics/
  */
 export const { findOne, findAll, findByPk, exists, create, update, destroy, count, transaction } = Database;

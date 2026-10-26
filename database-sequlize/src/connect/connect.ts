@@ -2,181 +2,234 @@ import { Sequelize } from 'sequelize';
 import { logger } from '@flutry/common';
 import Models from '../models/models';
 
-/**
- * Supported Sequelize database dialects.
- */
 export type DatabaseDialect = 'mysql' | 'mariadb';
 
-/**
- * Configuration options used to establish a database connection.
- */
 export interface DatabaseOptions {
-  /** Database name. */
   database: string;
-
-  /** Database username. */
   username: string;
-
-  /** Database password. */
   password: string;
-
-  /** Database host. */
   host: string;
-
-  /** Database port. */
   port: number;
-
-  /** Database dialect. */
   dialect: DatabaseDialect;
 }
 
 /**
- * Manages the Sequelize database connection for Flutry applications.
- *
- * The connection manager handles:
- * - Database connection initialization
- * - Automatic connection retries
- * - Model initialization
- * - Database schema synchronization
- * - Connection status tracking
- * - Manual reconnection
+ * Manages a single Sequelize connection for a Flutry application.
  */
 export class Connect {
-  /** Active Sequelize instance. */
   public static sequelize: Sequelize;
 
-  /** Indicates whether the database connection is currently active. */
   private static connected = false;
+  private static owner: Connect | null = null;
 
-  /** Maximum number of connection attempts. */
   private static readonly MAX_RETRIES = 5;
-
-  /** Delay between connection attempts in milliseconds. */
   private static readonly RETRY_DELAY = 5000;
 
-  /**
-   * Creates a new database connection manager.
-   *
-   * The connection process starts automatically after construction.
-   *
-   * @param options Database connection configuration.
-   */
-  public constructor(private readonly options: DatabaseOptions) {
-    void this.connect();
+  private connection: Sequelize | null = null;
+  private reconnectPromise: Promise<void> | null = null;
+  private disconnectPromise: Promise<void> | null = null;
+
+  public readonly ready: Promise<void>;
+
+  constructor(private readonly options: DatabaseOptions) {
+    if (Connect.owner) {
+      throw new Error('A database connection manager is already initialized. ' + 'Flutry currently supports one database manager per process.');
+    }
+
+    Connect.owner = this;
+    this.ready = this.connectWithRetry();
   }
 
-  /**
-   * Returns whether the database is currently connected.
-   */
   public static get isConnected(): boolean {
-    return this.connected;
+    return Connect.connected;
   }
 
   /**
    * Reconnects to the database.
    *
-   * The current connection is closed before a new connection is established.
+   * Concurrent reconnect calls share one operation.
    */
-  public async reconnect(): Promise<void> {
-    await this.disconnect();
-    await this.connectWithRetry();
+  public reconnect(): Promise<void> {
+    if (this.reconnectPromise) {
+      return this.reconnectPromise;
+    }
+
+    const operation = (async () => {
+      await this.ready;
+
+      await this.disconnectConnection();
+      await this.connectWithRetry();
+    })();
+
+    this.reconnectPromise = operation;
+
+    void operation
+      .finally(() => {
+        if (this.reconnectPromise === operation) {
+          this.reconnectPromise = null;
+        }
+      })
+      .catch(() => {});
+
+    return operation;
   }
 
   /**
-   * Starts the database connection process.
+   * Closes the active connection and releases ownership.
    */
-  private async connect(): Promise<void> {
-    await this.connectWithRetry();
-  }
+  public async close(): Promise<void> {
+    await this.ready.catch(() => {});
 
-  /**
-   * Closes the current database connection.
-   */
-  private async disconnect(): Promise<void> {
-    try {
-      await Connect.sequelize?.close();
+    if (this.reconnectPromise) {
+      await this.reconnectPromise.catch(() => {});
+    }
 
-      Connect.connected = false;
-    } catch (error) {
-      logger.error('Error closing database connection:', error);
+    await this.disconnectConnection();
+
+    if (Connect.owner === this) {
+      Connect.owner = null;
     }
   }
 
   /**
-   * Attempts to establish a database connection.
-   *
-   * Failed connections are retried until the maximum number of attempts
-   * is reached. Once the connection is established, all application
-   * models are initialized.
-   *
-   * @param attempt Current connection attempt number.
+   * Disconnects the currently owned Sequelize instance.
    */
-  private async connectWithRetry(attempt = 1): Promise<void> {
-    try {
-      await this.createConnection();
+  private disconnectConnection(): Promise<void> {
+    if (this.disconnectPromise) {
+      return this.disconnectPromise;
+    }
 
-      await Connect.sequelize.authenticate();
+    const operation = (async () => {
+      const connection = this.connection;
 
-      logger.info('Database connection established');
+      this.connection = null;
+      Connect.connected = false;
 
-      // Load models and configure their associations.
-      await new Models().init();
+      if (connection) {
+        try {
+          await connection.close();
 
-      Connect.connected = true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-
-      logger.error(`Connection failed (${attempt}/${Connect.MAX_RETRIES}): ${message}`);
-
-      if (attempt >= Connect.MAX_RETRIES) {
-        logger.error('Max retries reached. Database connection failed.', error);
-
-        process.exit(1);
+          logger.info('Database connection closed');
+        } catch (error) {
+          logger.error('Error closing database connection:', error);
+          throw error;
+        }
       }
 
-      logger.warn(`Retrying in ${Connect.RETRY_DELAY / 1000}s...`);
+      if (Connect.owner === this) {
+        Connect.sequelize = undefined as unknown as Sequelize;
+      }
+    })();
 
-      await new Promise<void>((resolve) => setTimeout(resolve, Connect.RETRY_DELAY));
+    this.disconnectPromise = operation;
 
-      return this.connectWithRetry(attempt + 1);
+    void operation
+      .finally(() => {
+        if (this.disconnectPromise === operation) {
+          this.disconnectPromise = null;
+        }
+      })
+      .catch(() => {});
+
+    return operation;
+  }
+
+  /**
+   * Connects to the database with retry handling.
+   */
+  private async connectWithRetry(): Promise<void> {
+    for (let attempt = 1; attempt <= Connect.MAX_RETRIES; attempt++) {
+      const connection = this.createConnection();
+
+      this.connection = connection;
+
+      try {
+        await connection.authenticate();
+
+        /**
+         * Publish the connection only after authentication.
+         */
+        Connect.sequelize = connection;
+
+        /**
+         * Pass the authenticated Sequelize instance
+         * to the model initializer.
+         */
+        await new Models({
+          sequelize: connection,
+        }).init();
+
+        Connect.connected = true;
+
+        logger.info('Database connection established');
+
+        return;
+      } catch (error) {
+        Connect.connected = false;
+
+        if (this.connection === connection) {
+          this.connection = null;
+        }
+
+        if (Connect.sequelize === connection) {
+          Connect.sequelize = undefined as unknown as Sequelize;
+        }
+
+        try {
+          await connection.close();
+        } catch (closeError) {
+          logger.error('Failed to close database connection:', closeError);
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+
+        logger.error(`Connection failed (${attempt}/${Connect.MAX_RETRIES}): ${message}`);
+
+        if (attempt >= Connect.MAX_RETRIES) {
+          logger.error('Max retries reached. Database connection failed.', error);
+
+          throw error;
+        }
+
+        logger.warn(`Retrying in ${Connect.RETRY_DELAY / 1000}s...`);
+
+        await new Promise<void>((resolve) => setTimeout(resolve, Connect.RETRY_DELAY));
+      }
     }
   }
 
   /**
-   * Returns the local system timezone in Sequelize-compatible format.
+   * Returns the local timezone in Sequelize-compatible format.
    */
-  private getTimeZone = async (): Promise<string> => {
-    const date = new Date();
-    const offsetMinutes = date.getTimezoneOffset();
+  private getTimeZone(): string {
+    const offsetMinutes = new Date().getTimezoneOffset();
 
     const sign = offsetMinutes > 0 ? '-' : '+';
+    const absoluteOffset = Math.abs(offsetMinutes);
 
-    const offsetHours = String(Math.abs(Math.floor(offsetMinutes / 60))).padStart(2, '0');
+    const hours = String(Math.floor(absoluteOffset / 60)).padStart(2, '0');
+    const minutes = String(absoluteOffset % 60).padStart(2, '0');
 
-    const offsetMinutesFormatted = String(Math.abs(offsetMinutes % 60)).padStart(2, '0');
-
-    return `${sign}${offsetHours}:${offsetMinutesFormatted}`;
-  };
+    return `${sign}${hours}:${minutes}`;
+  }
 
   /**
-   * Creates and configures the Sequelize instance.
+   * Creates an independently owned Sequelize instance.
    */
-  private async createConnection(): Promise<void> {
+  private createConnection(): Sequelize {
     const { database, username, password, host, port, dialect } = this.options;
 
-    Connect.sequelize = new Sequelize(database, username, password, {
+    return new Sequelize(database, username, password, {
       host,
       port,
       dialect,
       logging: false,
-      timezone: await this.getTimeZone(),
+      timezone: this.getTimeZone(),
 
-      // Prevent the connection from hanging indefinitely.
       dialectOptions: {
         connectTimeout: 15000,
       },
 
-      // Configure the Sequelize connection pool.
       pool: {
         max: 10,
         min: 2,
@@ -184,13 +237,11 @@ export class Connect {
         idle: 10000,
       },
 
-      // Retry common network-related connection errors.
       retry: {
         match: [/ETIMEDOUT/, /EHOSTUNREACH/, /ECONNRESET/, /ECONNREFUSED/],
         max: 3,
       },
 
-      // Use UTF-8 for full Unicode support and binary-safe comparisons.
       define: {
         charset: 'utf8mb4',
         collate: 'utf8mb4_bin',

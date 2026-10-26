@@ -1,73 +1,126 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { pathToFileURL } from 'url';
-import { Connect } from '../connect/connect';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { Sequelize } from 'sequelize';
+
 import { logger } from '@flutry/common';
 
+export interface ModelsOptions {
+  sequelize: Sequelize;
+  sync?: boolean;
+}
+
 /**
- * Automatically discovers, initializes, and synchronizes
- * Sequelize models used by the application.
+ * Automatically discovers, initializes, and optionally
+ * synchronizes Sequelize models used by the application.
  *
  * Models are loaded from the application's `src/models` directory
- * during development and from `dist/models` in production builds.
+ * when available, otherwise from `dist/models`.
  *
  * Model files must follow the `.model` naming convention and expose
  * a default class with a static `initialize()` method.
+ *
+ * Synchronization behavior:
+ *
+ * - Development: always sync with alter: true
+ * - Production: sync only when explicitly enabled
+ * - Other environments: sync only when explicitly enabled
  */
 export default class Models {
-  /** Collection of all discovered Sequelize models. */
-  private models: Record<string, any> = {};
-
   /**
-   * Initializes the model loader.
+   * Collection of discovered Sequelize models.
    */
-  constructor() {}
+  private readonly models: Record<string, any> = {};
 
   /**
-   * Determines whether the application is running in development mode.
+   * Sequelize instance associated with this model loader.
    */
-  private isDevelopment = (): boolean => process.env.NODE_ENV !== 'production';
+  private readonly sequelize: Sequelize;
 
   /**
-   * Loads all application models, configures their associations,
-   * and synchronizes the database schema.
-   *
-   * Models are loaded before associations are configured to ensure
-   * that every model is available when associations are created.
-   *
-   * In development mode, Sequelize uses `alter: true` to automatically
-   * update the database schema. Production uses a normal synchronization.
+   * Whether normal synchronization is enabled outside development.
+   */
+  private readonly sync: boolean;
+
+  constructor(options: ModelsOptions) {
+    this.sequelize = options.sequelize;
+    this.sync = options.sync ?? false;
+  }
+
+  /**
+   * Determines whether the application is running
+   * in development mode.
+   */
+  private isDevelopment(): boolean {
+    return process.env.NODE_ENV === 'development';
+  }
+
+  /**
+   * Discovers and initializes models, configures their
+   * associations, and synchronizes the database when required.
    */
   public async init(): Promise<void> {
     const sourceDir = path.join(process.cwd(), 'src/models');
     const buildDir = path.join(process.cwd(), 'dist/models');
 
-    // Prefer source models when running in development.
     const modelsDir = (await this.directoryExists(sourceDir)) ? sourceDir : buildDir;
 
-    // Load every model before configuring associations.
+    if (!(await this.directoryExists(modelsDir))) {
+      throw new Error(`Models directory was not found: ${modelsDir}`);
+    }
+
+    /**
+     * Load all models before configuring associations.
+     */
     await this.initModels(modelsDir);
 
-    // Configure associations after all models have been loaded.
+    /**
+     * Configure associations after all models have
+     * been initialized.
+     */
     for (const modelName of Object.keys(this.models)) {
       const model = this.models[modelName];
 
       if (typeof model.associate === 'function') {
-        model.associate(this.models);
+        await model.associate(this.models);
       }
     }
 
-    try {
-      // Use alter synchronization during development.
-      if (this.isDevelopment()) {
-        await Connect.sequelize.sync({ alter: true });
-      } else {
-        await Connect.sequelize.sync();
+    /**
+     * Development always uses alter: true.
+     *
+     * This behavior cannot be disabled using the sync option.
+     */
+    if (this.isDevelopment()) {
+      try {
+        await this.sequelize.sync({ alter: true });
+
+        logger.info('Development database models synchronized with alter: true.');
+      } catch (error) {
+        logger.error('Unable to synchronize development database models:', error);
+
+        throw error;
       }
 
-      logger.info('All models were synchronized successfully.');
+      return;
+    }
+
+    /**
+     * Outside development, synchronization is opt-in.
+     */
+    if (!this.sync) {
+      logger.info('Database models initialized. Automatic synchronization is disabled.');
+
+      return;
+    }
+
+    try {
+      await this.sequelize.sync();
+
+      logger.info('Database models synchronized successfully.');
     } catch (error) {
-      logger.error('Unable to synchronize models:', error);
+      logger.error('Unable to synchronize database models:', error);
+
       throw error;
     }
   }
@@ -75,13 +128,11 @@ export default class Models {
   /**
    * Recursively searches a directory for Sequelize model files.
    *
-   * Supported file extensions:
-   * - `.ts`
-   * - `.js`
-   * - `.mjs`
-   * - `.cjs`
-   *
-   * @param dir Directory to search.
+   * Supported extensions:
+   * - .ts
+   * - .js
+   * - .mjs
+   * - .cjs
    */
   private async initModels(dir: string): Promise<void> {
     const files = await fs.readdir(dir, {
@@ -93,7 +144,10 @@ export default class Models {
 
       if (file.isDirectory()) {
         await this.initModels(filePath);
-      } else if (/\.model\.(ts|js|mjs|cjs)$/.test(file.name)) {
+        continue;
+      }
+
+      if (/\.model\.(ts|js|mjs|cjs)$/.test(file.name)) {
         await this.loadModel(filePath);
       }
     }
@@ -101,9 +155,6 @@ export default class Models {
 
   /**
    * Checks whether a directory exists.
-   *
-   * @param dir Directory path to check.
-   * @returns `true` when the directory exists and is a directory.
    */
   private async directoryExists(dir: string): Promise<boolean> {
     try {
@@ -116,26 +167,28 @@ export default class Models {
   /**
    * Dynamically imports and initializes a Sequelize model.
    *
-   * The model must expose a default export containing a static
-   * `initialize()` method.
-   *
-   * @param filePath Absolute path to the model file.
+   * Uses native dynamic import to support applications
+   * executed through tsx.
    */
-  private loadModel = async (filePath: string): Promise<void> => {
+  private async loadModel(filePath: string): Promise<void> {
     try {
-      const module = await import(pathToFileURL(filePath).href);
+      const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
+
+      const module = await dynamicImport(pathToFileURL(filePath).href);
 
       const ModelClass = module.default;
 
-      if (ModelClass && typeof ModelClass.initialize === 'function') {
-        ModelClass.initialize(Connect.sequelize);
-
-        this.models[ModelClass.name] = ModelClass;
-      } else {
-        logger.info(`Model at ${filePath} does not have an initialize method.`);
+      if (!ModelClass || typeof ModelClass.initialize !== 'function') {
+        throw new TypeError(`Model at ${filePath} must export a default class with an initialize() method.`);
       }
+
+      await ModelClass.initialize(this.sequelize);
+
+      this.models[ModelClass.name] = ModelClass;
     } catch (error) {
       logger.error(`Failed to load model at ${filePath}`, error);
+
+      throw error;
     }
-  };
+  }
 }

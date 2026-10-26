@@ -5,3 +5,6 @@ export { RouteLoader } from './router/loader';
 export { Ctx } from './router/context';
 export type { CtxHandler, RouteDefinition, HttpMethod, RouteLoaderOptions, RoutePlugin } from './types/router.types';
 export { getSocket, sendRoom } from './socket.io/socket.io';
+export { RateLimit } from './rate-limit/rate-limit';
+export { RateLimitExceededError, RateLimitUnavailableError } from './rate-limit/errors';
+export type { RateLimitOptions, GlobalRateLimitOptions, RateLimitResult, RateLimitKeyGenerator, RateLimitSkip } from './rate-limit/types';

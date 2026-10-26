@@ -5,7 +5,8 @@
   "types": "dist/index.d.ts",
   "license": "Apache-2.0",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "npm run build && node --test tests/*.test.cjs"
   },
   "files": [
     "dist"

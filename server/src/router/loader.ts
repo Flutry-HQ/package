@@ -6,6 +6,7 @@ import { logger } from '@flutry/common';
 import { Router } from './router';
 import { FastifyInstance, type FastifyError } from 'fastify';
 import { RouteLoaderOptions } from '../types/router.types';
+import { RateLimitExceededError } from '../rate-limit/errors';
 
 /**
  * Automatically discovers and registers Flutry routes.
@@ -141,7 +142,7 @@ export class RouteLoader {
        * Only files following the `.route.ts` convention
        * are treated as application routes.
        */
-      if (entry.isFile() && entry.name.endsWith('.route.ts')) {
+      if (entry.isFile() && /\.route\.(ts|js|mjs|cjs)$/.test(entry.name)) {
         tasks.push(this.loadRoute(filePath, basePath, entry.name));
       }
     }
@@ -244,7 +245,7 @@ export class RouteLoader {
     /**
      * Remove the `.route.ts` suffix from the file name.
      */
-    const routeName = fileName.replace(/\.route\.ts$/, '');
+    const routeName = fileName.replace(/\.route\.(ts|js|mjs|cjs)$/, '');
 
     /*
      * Only:
@@ -426,7 +427,10 @@ export class RouteLoader {
        * Log the original error for debugging and
        * server-side diagnostics.
        */
-      logger.error(error as any);
+      // Quota rejections are expected traffic, not application failures.
+      if (!(error instanceof RateLimitExceededError)) {
+        logger.error(error);
+      }
 
       /**
        * Use the error's status code when it represents

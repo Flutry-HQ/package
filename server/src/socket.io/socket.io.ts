@@ -5,38 +5,20 @@ import { pathToFileURL } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { Server, type ServerOptions } from 'socket.io';
 import { logger } from '@flutry/common';
-import { HttpOptions } from '../types/server.typet';
+import type { HttpOptions } from '../types/server.typet';
 
 /**
  * Stores the globally registered Socket instance.
- *
- * The Socket.IO server is initialized by HttpServer only once.
- * Other parts of the application can access the already initialized
- * instance through getSocket() without creating another Socket.IO server.
  */
 let socketInstance: Socket | null = null;
 
 /**
  * Socket.IO wrapper used by the Flutry HTTP server.
- *
- * This class is responsible for:
- * - Initializing the Socket.IO server.
- * - Exposing the underlying Socket.IO instance.
- * - Providing common Socket.IO utilities.
- * - Managing the Socket.IO server lifecycle.
  */
 export class Socket {
-  /**
-   * Underlying Socket.IO server instance.
-   */
   private readonly io: Server;
+  private closePromise: Promise<void> | null = null;
 
-  /**
-   * Creates a new Socket.IO server instance.
-   *
-   * @param app Fastify application instance.
-   * @param options Optional Socket.IO server options.
-   */
   constructor(app: FastifyInstance, options?: Partial<ServerOptions>) {
     this.io = new Server(app.server, options);
 
@@ -44,39 +26,28 @@ export class Socket {
   }
 
   /**
-   * Returns the underlying Socket.IO Server instance.
-   *
-   * This can be used when direct access to Socket.IO functionality
-   * is required.
+   * Returns the underlying Socket.IO server.
    */
   public get instance(): Server {
     return this.io;
   }
 
   /**
-   * Returns the number of currently connected clients.
+   * Returns the number of connected clients.
    */
   public get connected(): number {
     return this.io.engine.clientsCount;
   }
 
   /**
-   * Emits an event to all currently connected clients.
-   *
-   * @param event Event name.
-   * @param data Optional event payload.
-   * @returns True when the event was successfully emitted.
+   * Emits an event to all connected clients.
    */
   public emit(event: string, data?: unknown): boolean {
     return this.io.emit(event, data);
   }
 
   /**
-   * Registers an event listener on the Socket.IO server.
-   *
-   * @param event Event name.
-   * @param listener Event listener callback.
-   * @returns The current Socket instance for chaining.
+   * Registers a Socket.IO event listener.
    */
   public on(event: string, listener: (...args: any[]) => void): this {
     this.io.on(event, listener);
@@ -85,22 +56,27 @@ export class Socket {
   }
 
   /**
-   * Closes the Socket.IO server.
+   * Closes Socket.IO and its active connections.
    *
-   * The returned promise resolves after the server has
-   * completely finished shutting down.
+   * Concurrent calls share the same shutdown promise.
    */
   public close(): Promise<void> {
-    return new Promise((resolve) => {
+    if (this.closePromise) {
+      return this.closePromise;
+    }
+
+    this.closePromise = new Promise<void>((resolve) => {
       this.io.close(() => {
         logger.info('Socket.IO server closed');
         resolve();
       });
     });
+
+    return this.closePromise;
   }
 
   /**
-   * Indicates whether the underlying HTTP server is currently running.
+   * Indicates whether the underlying HTTP server is running.
    */
   public get isRunning(): boolean {
     return this.io.httpServer?.listening ?? false;
@@ -108,11 +84,7 @@ export class Socket {
 }
 
 /**
- * Loads every TypeScript and JavaScript file from
- * src/utils/socket and all of its subdirectories.
- *
- * Files are imported after the Socket.IO instance has been
- * initialized, allowing them to use getSocket() safely.
+ * Recursively loads Socket.IO utility files.
  */
 async function loadSocketFolder(directory: string): Promise<void> {
   const entries = await fs.readdir(directory, {
@@ -122,27 +94,15 @@ async function loadSocketFolder(directory: string): Promise<void> {
   for (const entry of entries) {
     const filePath = path.join(directory, entry.name);
 
-    /**
-     * Recursively load nested socket directories.
-     */
     if (entry.isDirectory()) {
       await loadSocketFolder(filePath);
       continue;
     }
 
-    /**
-     * Only load TypeScript and JavaScript files.
-     */
     if (!entry.isFile() || (!entry.name.endsWith('.ts') && !entry.name.endsWith('.js'))) {
       continue;
     }
 
-    /**
-     * Import the socket file.
-     *
-     * Importing the module automatically executes its code,
-     * allowing it to register Socket.IO events.
-     */
     await import(pathToFileURL(filePath).href);
 
     logger.info(`Loaded Socket.IO file: ${path.relative(process.cwd(), filePath)}`);
@@ -150,10 +110,9 @@ async function loadSocketFolder(directory: string): Promise<void> {
 }
 
 /**
- * Loads the application's Socket.IO utility files.
+ * Loads application Socket.IO utility files.
  *
- * The src/utils/socket directory is optional.
- * If the directory does not exist, Socket.IO continues normally.
+ * The directory is optional.
  */
 export async function loadSocketUtils(): Promise<void> {
   const socketDirectory = path.resolve(process.cwd(), 'src', 'utils', 'socket');
@@ -168,20 +127,9 @@ export async function loadSocketUtils(): Promise<void> {
 }
 
 /**
- * Registers and initializes Socket.IO for the HTTP server.
- *
- * Socket.IO initialization itself is synchronous.
- * Socket utility files are loaded separately through
- * loadSocketUtils() before the HTTP server starts.
- *
- * @param app Fastify application instance.
- * @param options Flutry HTTP server options.
- * @returns The initialized Socket instance or null when disabled.
+ * Registers Socket.IO with the Fastify HTTP server.
  */
 export function registerSocket(app: FastifyInstance, options: HttpOptions): Socket | null {
-  /**
-   * Socket.IO is explicitly disabled.
-   */
   if (options.socket === false) {
     socketInstance = null;
 
@@ -190,21 +138,31 @@ export function registerSocket(app: FastifyInstance, options: HttpOptions): Sock
     return null;
   }
 
-  /**
-   * Initialize Socket.IO and store the instance globally.
-   */
   socketInstance = new Socket(app, options.socket);
 
-  return socketInstance;
+  const socket = socketInstance;
+
+  /**
+   * Close Socket.IO before Fastify drains HTTP connections.
+   */
+  app.addHook('preClose', async () => {
+    await socket.close();
+  });
+
+  /**
+   * Release the global reference after Fastify closes.
+   */
+  app.addHook('onClose', async () => {
+    if (socketInstance === socket) {
+      socketInstance = null;
+    }
+  });
+
+  return socket;
 }
 
 /**
- * Returns the globally registered Socket instance.
- *
- * This function does not initialize Socket.IO.
- * Socket.IO must have been enabled and initialized by HttpServer first.
- *
- * @throws Error when Socket.IO has not been initialized.
+ * Returns the globally registered Socket.IO instance.
  */
 export function getSocket(): Socket {
   if (!socketInstance) {
@@ -219,11 +177,7 @@ export function getSocket(): Socket {
 }
 
 /**
- * Sends an event to all clients connected to a specific Socket.IO room.
- *
- * @param room Socket.IO room name.
- * @param event Event name.
- * @param payload Data sent with the event.
+ * Sends an event to all clients in a Socket.IO room.
  */
 export function sendRoom(room: string, event: string, payload: any): void {
   getSocket().instance.to(room).emit(event, payload);

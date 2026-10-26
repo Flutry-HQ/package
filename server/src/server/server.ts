@@ -1,13 +1,14 @@
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import path from 'node:path';
 
 import { registerPlugins } from './plugins';
 import { registerLifecycle } from './lifecycle';
 import { logger } from '@flutry/common';
 import { RouteLoader } from '../router/loader';
-import { HttpOptions } from '../types/server.typet';
+import type { HttpOptions } from '../types/server.typet';
 
-import { loadSocketUtils, registerSocket, Socket } from '../socket.io/socket.io';
+import { loadSocketUtils, registerSocket, type Socket } from '../socket.io/socket.io';
+import { registerRateLimit } from '../rate-limit/register';
 
 /**
  * Main HTTP server implementation for the Flutry framework.
@@ -58,7 +59,7 @@ export class HttpServer {
   /**
    * HTTP server configuration used to initialize this instance.
    */
-  private readonly options: HttpOptions | null;
+  private readonly options: HttpOptions;
 
   /**
    * Creates and configures a new Flutry HTTP server.
@@ -80,24 +81,28 @@ export class HttpServer {
     this.options = options;
 
     /**
-     * Convert Flutry HTTP options into Fastify server options.
+     * Separate Flutry-specific options from Fastify options.
      */
-    const fastifyOptions: FastifyServerOptions = {
-      trustProxy: options.trustProxy ?? true,
-      logger: options.logger ?? false,
-    };
+    const { prefix, compression, helmet, socket, rateLimit, ...fastifyOptions } = options;
 
     /**
      * Create the underlying Fastify application.
+     *
+     * Native Fastify options are forwarded directly.
+     * Flutry defaults to disabling proxy trust and
+     * Fastify's built-in logger unless explicitly configured.
      */
-    this.app = Fastify(fastifyOptions);
+    this.app = Fastify({
+      ...fastifyOptions,
+      trustProxy: options.trustProxy ?? false,
+      logger: options.logger ?? false,
+    });
 
     /**
      * Initialize the route loader.
      */
     this.routeLoader = new RouteLoader(this.app, {
       directory: path.resolve(process.cwd(), 'src', 'routes'),
-
       prefix: options.prefix,
     });
 
@@ -118,6 +123,7 @@ export class HttpServer {
      * Register Fastify lifecycle handlers.
      */
     registerLifecycle(this.app, options);
+    registerRateLimit(this.app, options);
   }
 
   /**
@@ -167,31 +173,43 @@ export class HttpServer {
     /**
      * Log server startup information.
      */
-    logger.info(`===============================================`);
+    logger.info('===============================================');
     logger.info(`🚀 Flutry Server v${process.env.npm_package_version ?? 'unknown'}`);
-    logger.info(`-----------------------------------------------`);
+    logger.info('-----------------------------------------------');
     logger.info(`📦 Environment: ${process.env.NODE_ENV ?? 'development'}`);
     logger.info(`🌐 Address: ${address}`);
     logger.info(`⏰ Startup: ${startupTime.toFixed(2)}ms`);
-    logger.info(`🛡️ Trust Proxy: ${this.options?.trustProxy ?? false}`);
+
+    /**
+     * Log proxy configuration without assuming
+     * trustProxy is always a boolean.
+     */
+    const trustProxy = this.options.trustProxy ?? false;
+
+    logger.info('🛡️ Trust Proxy', {
+      value: typeof trustProxy === 'function' ? '[Function]' : trustProxy,
+    });
 
     /**
      * Report the current Socket.IO state.
      */
     if (this.socket?.isRunning) {
-      logger.info(`🔌 Socket.IO: RUNNING`);
+      logger.info('🔌 Socket.IO: RUNNING');
     } else {
-      logger.info(`🔌 Socket.IO: DISABLED`);
+      logger.info('🔌 Socket.IO: DISABLED');
     }
 
-    logger.info(`-----------------------------------------------`);
-    logger.info(`===============================================`);
+    logger.info('-----------------------------------------------');
+    logger.info('===============================================');
 
     return address;
   }
 
   /**
    * Gracefully shuts down the HTTP server.
+   *
+   * Fastify invokes its registered shutdown hooks
+   * when close() is called.
    */
   public async close(): Promise<void> {
     await this.app.close();

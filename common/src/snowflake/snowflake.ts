@@ -1,89 +1,79 @@
-import crypto from 'crypto';
-import { networkInterfaces } from 'os';
+import crypto from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 
 import { logger } from '../logger/logger';
 
 /**
- * Generates unique, sortable Snowflake IDs.
+ * Generates unique, sortable Snowflake-style IDs.
  *
- * Each generated ID contains three parts:
+ * ID structure:
  *
- * - timestamp: milliseconds elapsed since the configured epoch
- * - machine ID: identifies the running service instance
- * - sequence: distinguishes IDs generated during the same millisecond
+ * - Timestamp: milliseconds since January 1, 2023 (UTC)
+ * - Machine ID: 22 bits
+ * - Sequence: 6 bits
  *
- * IDs are returned as strings because the resulting 64-bit value can be
- * larger than JavaScript's safe integer range.
+ * IMPORTANT:
+ * The timestamp field grows over time, so generated IDs are
+ * not guaranteed to fit within a signed or unsigned 64-bit integer.
  *
- * A new random machine key is generated for every service instance.
- * This makes separate instances on the same machine use different
- * machine IDs and greatly reduces the chance of collisions.
+ * IDs are returned as decimal strings to preserve precision.
+ *
+ * For database storage, use a sufficiently large string column
+ * (for example VARCHAR(32)) rather than BIGINT.
+ *
+ * For guaranteed uniqueness across multiple service instances,
+ * configure a distinct SNOWFLAKE_MACHINE_ID for each instance.
+ *
+ * Without explicit configuration, a random machine ID is generated.
+ * Random IDs reduce collision probability but do not eliminate it.
  */
 export class SnowflakeService {
   /**
-   * Machine identifier assigned to this service instance.
-   *
-   * It is generated lazily when the first ID is requested and remains
-   * unchanged for the lifetime of this service instance.
+   * Machine identifier assigned to this generator.
    */
   private machineId: number | undefined;
 
   /**
-   * Timestamp of the last generated ID.
-   *
-   * Used to guarantee that IDs are generated in chronological order
-   * and to detect the system clock moving backwards.
+   * Last logical timestamp used to generate an ID.
    */
   private lastTimestamp = -1;
 
   /**
-   * Sequence number used when multiple IDs are generated within the
-   * same millisecond.
+   * Sequence counter for IDs generated in the same millisecond.
    */
   private sequence = 0;
 
   /**
-   * Custom epoch used as the starting point for Snowflake timestamps.
-   *
-   * Using a custom epoch keeps the timestamp portion smaller than a
-   * Unix timestamp while still providing a large usable time range.
+   * Custom epoch: January 1, 2023, 00:00:00 UTC.
    */
   private static readonly EPOCH = 1672531200000;
 
   /**
-   * Number of bits reserved for the machine identifier.
-   *
-   * 22 bits allow up to 4,194,304 different machine IDs.
+   * Machine identifier bit allocation.
    */
   private static readonly MACHINE_ID_BITS = 22;
 
   /**
-   * Number of bits reserved for the per-millisecond sequence.
-   *
-   * 6 bits allow up to 64 IDs to be generated within the same
-   * millisecond by one service instance.
+   * Per-millisecond sequence bit allocation.
    */
   private static readonly SEQUENCE_BITS = 6;
 
   /**
-   * Maximum value that can be stored in the machine ID section.
+   * Maximum machine identifier.
    */
   private static readonly MAX_MACHINE_ID = 2 ** SnowflakeService.MACHINE_ID_BITS - 1;
 
   /**
-   * Maximum value that can be stored in the sequence section.
+   * Maximum sequence number.
    */
   private static readonly MAX_SEQUENCE = 2 ** SnowflakeService.SEQUENCE_BITS - 1;
 
   /**
-   * Generates the machine ID for the current service instance.
+   * Initializes the machine identifier.
    *
-   * The machine ID is derived from both the machine's MAC address and
-   * a cryptographically secure random value generated when the service
-   * starts. The random component ensures that multiple instances running
-   * on the same machine are unlikely to receive the same machine ID.
-   *
-   * @throws If the machine ID cannot be initialized.
+   * Priority:
+   * 1. Explicit SNOWFLAKE_MACHINE_ID environment variable
+   * 2. Randomly generated identifier
    */
   private ensureMachineId(): void {
     if (this.machineId !== undefined) {
@@ -91,8 +81,25 @@ export class SnowflakeService {
     }
 
     try {
-      const machineKey = crypto.randomBytes(32).toString('hex');
+      const configuredId = process.env.SNOWFLAKE_MACHINE_ID;
 
+      if (configuredId !== undefined) {
+        if (!/^\d+$/.test(configuredId)) {
+          throw new RangeError('SNOWFLAKE_MACHINE_ID must be a non-negative integer');
+        }
+
+        const parsedId = Number(configuredId);
+
+        if (!Number.isSafeInteger(parsedId) || parsedId < 0 || parsedId > SnowflakeService.MAX_MACHINE_ID) {
+          throw new RangeError(`SNOWFLAKE_MACHINE_ID must be between 0 and ${SnowflakeService.MAX_MACHINE_ID}`);
+        }
+
+        this.machineId = parsedId;
+
+        return;
+      }
+
+      const machineKey = crypto.randomBytes(32).toString('hex');
       const mac = this.getMacAddress();
 
       const hash = crypto.createHash('sha256').update(`${mac}:${machineKey}`).digest();
@@ -101,19 +108,14 @@ export class SnowflakeService {
     } catch (error) {
       logger.error('Failed to initialize Snowflake machine ID', error);
 
-      throw new Error('Failed to initialize Snowflake machine ID');
+      throw error;
     }
   }
 
   /**
    * Retrieves the first available non-internal MAC address.
    *
-   * The MAC address is used as one of the inputs when generating the
-   * instance-specific machine ID.
-   *
-   * If no usable interface is available, a zero MAC address is used.
-   *
-   * @returns A MAC address or the fallback zero address.
+   * Falls back to a zero MAC if no suitable interface exists.
    */
   private getMacAddress(): string {
     try {
@@ -142,70 +144,40 @@ export class SnowflakeService {
   }
 
   /**
-   * Returns the number of milliseconds elapsed since the custom epoch.
-   *
-   * @returns Milliseconds since `SnowflakeService.EPOCH`.
+   * Returns milliseconds elapsed since the custom epoch.
    */
   private currentTimestamp(): number {
     return Date.now() - SnowflakeService.EPOCH;
   }
 
   /**
-   * Waits until the system clock reaches the next millisecond.
+   * Generates a sortable Snowflake-style identifier.
    *
-   * This is used when the sequence counter is exhausted and another
-   * ID cannot safely be generated within the current millisecond.
+   * IDs are monotonically increasing within this generator.
    *
-   * @param lastTimestamp Timestamp that must be passed before continuing.
-   * @returns The next available timestamp.
+   * When the sequence reaches its limit, the logical timestamp
+   * advances without blocking the event loop.
+   *
+   * If the system clock moves backwards, the previous logical
+   * timestamp is retained.
+   *
+   * @returns A decimal string representing the generated ID.
    */
-  private waitNextMillis(lastTimestamp: number): number {
-    let timestamp = this.currentTimestamp();
-
-    while (timestamp <= lastTimestamp) {
-      timestamp = this.currentTimestamp();
-    }
-
-    return timestamp;
-  }
-
-  /**
-   * Generates a new unique Snowflake ID.
-   *
-   * The generated ID is composed of:
-   *
-   * `timestamp | machine ID | sequence`
-   *
-   * When multiple IDs are generated during the same millisecond, the
-   * sequence number is incremented. Once the sequence is exhausted,
-   * generation waits for the next millisecond.
-   *
-   * The method also detects the system clock moving backwards and
-   * refuses to generate an ID in that situation.
-   *
-   * @returns A unique Snowflake ID represented as a string.
-   * @throws If the system clock moves backwards or ID generation fails.
-   */
-  generate(): string {
+  public generate(): string {
     try {
       this.ensureMachineId();
 
       let timestamp = this.currentTimestamp();
 
       if (timestamp < this.lastTimestamp) {
-        const error = new Error('Clock moved backwards. Refusing to generate ID');
-
-        logger.error('Snowflake clock moved backwards', error);
-
-        throw error;
+        timestamp = this.lastTimestamp;
       }
 
       if (timestamp === this.lastTimestamp) {
         this.sequence++;
 
         if (this.sequence > SnowflakeService.MAX_SEQUENCE) {
-          timestamp = this.waitNextMillis(this.lastTimestamp);
-
+          timestamp = this.lastTimestamp + 1;
           this.sequence = 0;
         }
       } else {
@@ -214,13 +186,6 @@ export class SnowflakeService {
 
       this.lastTimestamp = timestamp;
 
-      /**
-       * Builds the final Snowflake ID using bit shifting:
-       *
-       * timestamp  -> highest bits
-       * machine ID -> middle bits
-       * sequence   -> lowest bits
-       */
       const id =
         (BigInt(timestamp) << BigInt(SnowflakeService.MACHINE_ID_BITS + SnowflakeService.SEQUENCE_BITS)) |
         (BigInt(this.machineId!) << BigInt(SnowflakeService.SEQUENCE_BITS)) |
@@ -228,20 +193,14 @@ export class SnowflakeService {
 
       return id.toString();
     } catch (error) {
-      if (error instanceof Error && error.message === 'Clock moved backwards. Refusing to generate ID') {
-        throw error;
-      }
-
       logger.error('Failed to generate Snowflake ID', error);
 
-      throw new Error('Failed to generate Snowflake ID');
+      throw error;
     }
   }
 }
 
 /**
- * Shared SnowflakeService instance used throughout Flutry.
- *
- * Use this instance when a package needs to generate a Snowflake ID.
+ * Shared Snowflake generator for Flutry applications.
  */
 export const snowflake = new SnowflakeService();

@@ -1,11 +1,12 @@
 {
   "name": "@flutry/server",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "license": "Apache-2.0",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "npm run build && node --test tests/*.test.cjs"
   },
   "files": [
     "dist"
@@ -26,5 +27,13 @@
     "@flutry/common": "latest",
     "fastify": "^5.12.1",
     "socket.io": "^4.8.3"
+  },
+  "peerDependencies": {
+    "@flutry/redis": "latest"
+  },
+  "peerDependenciesMeta": {
+    "@flutry/redis": {
+      "optional": true
+    }
   }
 }

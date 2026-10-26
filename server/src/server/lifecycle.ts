@@ -36,13 +36,17 @@ export function registerLifecycle(app: FastifyInstance, _options: HttpOptions): 
  * @param reply Fastify response instance.
  */
 async function onRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const pathname = (request.raw.url ?? '/').split('?')[0];
+  const url = isDevelopment ? (request.raw.url ?? '/') : pathname;
+
   /**
    * Ignore browser favicon requests.
    *
    * Browsers commonly request `/favicon.ico` automatically,
    * so logging these requests would create unnecessary noise.
    */
-  if (request.raw.url === '/favicon.ico') {
+  if (pathname === '/favicon.ico') {
     return;
   }
 
@@ -62,6 +66,6 @@ async function onRequest(request: FastifyRequest, reply: FastifyReply): Promise<
   reply.raw.once('finish', () => {
     const duration = performance.now() - start;
 
-    logger.http(`http ${request.method} ${request.raw.url} ` + `${duration.toFixed(2)}ms ${reply.statusCode}`);
+    logger.http(`http ${request.method} ${url} ${duration.toFixed(2)}ms ${reply.statusCode}`);
   });
 }

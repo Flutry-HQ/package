@@ -1,99 +1,27 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
-import path from 'path';
+import path from 'node:path';
+import { inspect } from 'node:util';
 
 export type LogMeta = Record<string, unknown>;
-
 export type LoggableError = Error & Record<string, unknown>;
-
 export type ErrorMeta = LogMeta;
 
-/**
- * Public logging interface used by Flutry services and packages.
- *
- * The logger supports the standard Winston log levels used by Flutry:
- * `error`, `warn`, `info`, `http` and `debug`.
- */
 export interface Logger {
-  /**
-   * Logs an error message.
-   *
-   * Supports multiple forms:
-   * - `error('Something failed')`
-   * - `error('Something failed', { userId: 123 })`
-   * - `error(error)`
-   * - `error(error, { userId: 123 })`
-   * - `error('Something failed', error, { userId: 123 })`
-   *
-   * Error objects are automatically converted into useful log metadata,
-   * including their name, message and stack trace.
-   */
   error(message: string, meta?: LogMeta): void;
-
-  /**
-   * Logs an Error or unknown thrown value.
-   *
-   * Error details are extracted automatically and included in the log.
-   */
   error(error: unknown, meta?: ErrorMeta): void;
-
-  /**
-   * Logs a custom error message together with an Error or thrown value.
-   *
-   * Additional metadata can be supplied as the third argument.
-   */
   error(message: string, error: unknown, meta?: ErrorMeta): void;
-
-  /**
-   * Logs a warning.
-   *
-   * Use this for unexpected situations that do not prevent the
-   * application from continuing to work.
-   */
   warn(message: string, meta?: LogMeta): void;
-
-  /**
-   * Logs general application information.
-   *
-   * This is the default level for important runtime events that are
-   * useful in production logs.
-   */
   info(message: string, meta?: LogMeta): void;
-
-  /**
-   * Logs HTTP-related activity.
-   *
-   * This level is useful for request/response logging and can also be
-   * used as a stream target for HTTP logging middleware.
-   */
   http(message: string, meta?: LogMeta): void;
-
-  /**
-   * Logs detailed debugging information.
-   *
-   * Debug logs are enabled by default outside production and are
-   * normally disabled in production unless `LOG_LEVEL` is configured.
-   */
   debug(message: string, meta?: LogMeta): void;
 }
 
 class LoggerService implements Logger {
-  /**
-   * Directory where rotated log files are stored.
-   */
   private static readonly LOG_DIR = path.join(process.cwd(), 'logs');
 
-  /**
-   * Active log level.
-   *
-   * `LOG_LEVEL` can be used to override the default. Production uses
-   * `info`, while development environments use `debug`.
-   */
   private static readonly LOG_LEVEL = process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
 
-  /**
-   * Winston log level priorities used by Flutry.
-   */
   private static readonly levels = {
     error: 0,
     warn: 1,
@@ -102,12 +30,6 @@ class LoggerService implements Logger {
     debug: 4,
   };
 
-  /**
-   * Colors used for console output.
-   *
-   * File logs are intentionally kept uncolored so they remain easy to
-   * search, parse and process by external tools.
-   */
   private readonly colors = {
     error: 'bold red',
     warn: 'bold yellow',
@@ -118,12 +40,6 @@ class LoggerService implements Logger {
 
   private readonly logger: winston.Logger;
 
-  /**
-   * Creates a logger instance.
-   *
-   * @param baseMeta Metadata automatically attached to every log entry.
-   * @param logger Existing Winston logger used when creating child logger instances.
-   */
   constructor(
     private readonly baseMeta: LogMeta = {},
     logger?: winston.Logger,
@@ -132,11 +48,90 @@ class LoggerService implements Logger {
   }
 
   /**
-   * Removes internal Winston properties from log metadata and formats
-   * the remaining values as readable JSON.
+   * Converts arbitrary values into JSON-safe representations.
    *
-   * This keeps the actual application metadata separate from fields
-   * already displayed in the main log line.
+   * Handles:
+   * - BigInt
+   * - Circular references
+   * - Error instances
+   * - Functions and symbols
+   * - Non-serializable objects
+   */
+  private safeStringify(value: unknown): string {
+    try {
+      const ancestors: object[] = [];
+
+      const result = JSON.stringify(
+        value,
+        function (_key, current: unknown): unknown {
+          if (typeof current === 'bigint') {
+            return current.toString();
+          }
+
+          if (typeof current === 'function') {
+            return `[Function: ${current.name || 'anonymous'}]`;
+          }
+
+          if (typeof current === 'symbol') {
+            return current.toString();
+          }
+
+          if (current instanceof Error) {
+            const errorFields: Record<string, unknown> = {
+              name: current.name,
+              message: current.message,
+              stack: current.stack,
+            };
+
+            for (const property of Object.getOwnPropertyNames(current)) {
+              if (!(property in errorFields)) {
+                try {
+                  errorFields[property] = (current as unknown as Record<string, unknown>)[property];
+                } catch {
+                  errorFields[property] = '[Unreadable]';
+                }
+              }
+            }
+
+            current = errorFields;
+          }
+
+          if (typeof current === 'object' && current !== null) {
+            while (ancestors.length > 0 && ancestors[ancestors.length - 1] !== this) {
+              ancestors.pop();
+            }
+
+            if (ancestors.includes(current)) {
+              return '[Circular]';
+            }
+
+            ancestors.push(current);
+          }
+
+          return current;
+        },
+        2,
+      );
+
+      return result ?? String(value);
+    } catch {
+      try {
+        return inspect(value, {
+          depth: 5,
+          colors: false,
+          maxArrayLength: 100,
+          maxStringLength: 10000,
+          breakLength: 120,
+          getters: false,
+        });
+      } catch {
+        return '[Unserializable]';
+      }
+    }
+  }
+
+  /**
+   * Safely formats additional metadata.
    */
   private formatMeta(meta: Record<string, unknown>): string {
     const cleaned = { ...meta };
@@ -147,27 +142,23 @@ class LoggerService implements Logger {
     delete cleaned.service;
     delete cleaned.stack;
 
-    const keys = Object.keys(cleaned);
-
-    if (keys.length === 0) {
+    if (Object.keys(cleaned).length === 0) {
       return '';
     }
 
-    return '\n' + JSON.stringify(cleaned, null, 2);
+    return `\n${this.safeStringify(cleaned)}`;
   }
 
   /**
-   * Creates the common human-readable log format.
-   *
-   * The resulting line starts with the timestamp, log level and message,
-   * followed by the error stack and additional metadata when available.
+   * Creates the shared human-readable log format.
    */
   private buildPlainFormat() {
     return winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-      const base = `[${timestamp}] [${level}] : ${message}`;
+      const messageText = typeof message === 'string' ? message : this.safeStringify(message);
 
-      const stackStr = stack ? `\n${stack}` : '';
+      const base = `[${timestamp}] [${level}] : ${messageText}`;
 
+      const stackStr = stack ? `\n${String(stack)}` : '';
       const metaStr = this.formatMeta(meta);
 
       return `${base}${stackStr}${metaStr}`;
@@ -175,11 +166,21 @@ class LoggerService implements Logger {
   }
 
   /**
-   * Creates and configures the underlying Winston logger.
-   *
-   * Console output is colorized for easier development, while file
-   * output remains plain text. Log files are rotated daily and removed
-   * automatically after the configured retention period.
+   * Reports logging infrastructure errors without
+   * sending them through Winston again.
+   */
+  private reportTransportError(source: string, error: unknown): void {
+    try {
+      const message = error instanceof Error ? (error.stack ?? error.message) : inspect(error, { depth: 2, getters: false });
+
+      process.stderr.write(`[Flutry Logger] ${source}: ${message}\n`);
+    } catch {
+      // Avoid throwing from the logging error handler.
+    }
+  }
+
+  /**
+   * Creates the Winston logger and attaches error handlers.
    */
   private createLogger(): winston.Logger {
     winston.addColors(this.colors);
@@ -188,9 +189,7 @@ class LoggerService implements Logger {
       winston.format.timestamp({
         format: 'YYYY-MM-DD HH:mm:ss',
       }),
-      winston.format.errors({
-        stack: true,
-      }),
+      winston.format.errors({ stack: true }),
       winston.format.colorize(),
       this.buildPlainFormat(),
     );
@@ -199,9 +198,7 @@ class LoggerService implements Logger {
       winston.format.timestamp({
         format: 'YYYY-MM-DD HH:mm:ss',
       }),
-      winston.format.errors({
-        stack: true,
-      }),
+      winston.format.errors({ stack: true }),
       this.buildPlainFormat(),
     );
 
@@ -209,7 +206,7 @@ class LoggerService implements Logger {
       format: consoleFormat,
     });
 
-    const combinedFileTransport = new DailyRotateFile({
+    const fileTransport = new DailyRotateFile({
       dirname: LoggerService.LOG_DIR,
       filename: '%DATE%.log',
       datePattern: 'YYYY-MM-DD',
@@ -219,69 +216,83 @@ class LoggerService implements Logger {
       format: fileFormat,
     });
 
-    return winston.createLogger({
+    const logger = winston.createLogger({
       levels: LoggerService.levels,
       level: LoggerService.LOG_LEVEL,
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.errors({
-          stack: true,
-        }),
-      ),
-      transports: [consoleTransport, combinedFileTransport],
+      format: winston.format.combine(winston.format.timestamp(), winston.format.errors({ stack: true })),
+      transports: [consoleTransport, fileTransport],
       exitOnError: false,
     });
+
+    let fileTransportFailed = false;
+
+    fileTransport.on('error', (error: Error) => {
+      this.reportTransportError('File transport error', error);
+
+      if (fileTransportFailed) {
+        return;
+      }
+
+      fileTransportFailed = true;
+
+      try {
+        logger.remove(fileTransport);
+      } catch (removeError) {
+        this.reportTransportError('Failed to remove file transport', removeError);
+      }
+    });
+
+    consoleTransport.on('error', (error: Error) => {
+      this.reportTransportError('Console transport error', error);
+    });
+
+    logger.on('error', (error: Error) => {
+      this.reportTransportError('Winston error', error);
+    });
+
+    return logger;
   }
 
   /**
-   * Extracts custom properties from an Error object.
-   *
-   * Standard Error properties are handled separately, while additional
-   * properties added by libraries or application code are preserved as
-   * metadata.
+   * Extracts custom Error properties.
    */
   private extractErrorFields(error: LoggableError): LogMeta {
     const skip = new Set(['message', 'stack', 'name']);
-
     const extra: LogMeta = {};
 
     for (const key of Object.getOwnPropertyNames(error)) {
-      if (!skip.has(key)) {
+      if (skip.has(key)) {
+        continue;
+      }
+
+      try {
         extra[key] = (error as Record<string, unknown>)[key];
+      } catch {
+        extra[key] = '[Unreadable]';
       }
     }
 
     return extra;
   }
 
-  /**
-   * Determines whether a value is an Error instance.
-   */
   private isErrorLike(value: unknown): value is LoggableError {
     return value instanceof Error;
   }
 
-  /**
-   * Determines whether a value is a plain metadata object.
-   *
-   * Error instances and other object types are deliberately excluded
-   * so they can be handled separately by the error normalization logic.
-   */
   private isPlainMeta(value: unknown): value is LogMeta {
-    return typeof value === 'object' && value !== null && !(value instanceof Error) && value.constructor === Object;
+    if (typeof value !== 'object' || value === null || value instanceof Error) {
+      return false;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+
+    return prototype === Object.prototype || prototype === null;
   }
 
   /**
-   * Converts an unknown thrown value into a consistent log structure.
-   *
-   * JavaScript allows anything to be thrown, not just Error instances.
-   * This method makes sure all such values can still be logged in a
-   * predictable format.
+   * Normalizes thrown values.
    */
-  private normalizeUnknownError(value: unknown): {
-    message: string;
-    meta: LogMeta;
-  } {
+  private normalizeUnknownError(value: unknown): { message: string; meta: LogMeta } {
     if (this.isErrorLike(value)) {
       return {
         message: value.message,
@@ -309,11 +320,7 @@ class LoggerService implements Logger {
   }
 
   /**
-   * Merges instance-level metadata with metadata supplied for a
-   * particular log entry.
-   *
-   * Per-entry metadata takes precedence when the same key exists in
-   * both objects.
+   * Merges logger-level and entry-level metadata.
    */
   private withBaseMeta(meta?: LogMeta): LogMeta | undefined {
     if (Object.keys(this.baseMeta).length === 0 && !meta) {
@@ -326,20 +333,11 @@ class LoggerService implements Logger {
     };
   }
 
-  error(messageOrError: string, meta?: LogMeta): void;
-
+  error(message: string, meta?: LogMeta): void;
   error(error: unknown, meta?: ErrorMeta): void;
-
   error(message: string, error: unknown, meta?: ErrorMeta): void;
 
-  /**
-   * Logs an error using the supported error overloads.
-   *
-   * When an Error is supplied, its message, stack, name and additional
-   * properties are automatically extracted. Plain metadata is kept
-   * separate from thrown errors.
-   */
-  error(messageOrError: string | unknown, metaOrError?: LogMeta | unknown, maybeMeta?: ErrorMeta): void {
+  error(messageOrError: unknown, metaOrError?: unknown, maybeMeta?: ErrorMeta): void {
     if (typeof messageOrError === 'string') {
       if (metaOrError !== undefined && !this.isPlainMeta(metaOrError)) {
         const { meta: errMeta } = this.normalizeUnknownError(metaOrError);
@@ -373,61 +371,26 @@ class LoggerService implements Logger {
     );
   }
 
-  /**
-   * Logs a warning message.
-   *
-   * @param message Message to write to the log.
-   * @param meta Optional metadata attached to the log entry.
-   */
   warn(message: string, meta?: LogMeta): void {
     this.logger.warn(message, this.withBaseMeta(meta));
   }
 
-  /**
-   * Logs an informational message.
-   *
-   * @param message Message to write to the log.
-   * @param meta Optional metadata attached to the log entry.
-   */
   info(message: string, meta?: LogMeta): void {
     this.logger.info(message, this.withBaseMeta(meta));
   }
 
-  /**
-   * Logs an HTTP-related message.
-   *
-   * @param message HTTP log message.
-   * @param meta Optional request or response metadata.
-   */
   http(message: string, meta?: LogMeta): void {
     this.logger.http(message, this.withBaseMeta(meta));
   }
 
-  /**
-   * Logs a debug message.
-   *
-   * @param message Detailed debugging information.
-   * @param meta Optional metadata attached to the log entry.
-   */
   debug(message: string, meta?: LogMeta): void {
     this.logger.debug(message, this.withBaseMeta(meta));
   }
 
-  /**
-   * Returns the underlying Winston logger.
-   *
-   * This is useful when direct access to Winston functionality is
-   * required that is not exposed by the Flutry Logger interface.
-   */
   get raw(): winston.Logger {
     return this.logger;
   }
 
-  /**
-   * Returns a writable stream compatible with HTTP logging middleware.
-   *
-   * Each written message is trimmed and forwarded to the `http` log level.
-   */
   get httpLogStream() {
     return {
       write: (message: string) => this.http(message.trim()),
@@ -435,29 +398,10 @@ class LoggerService implements Logger {
   }
 }
 
-/**
- * Shared LoggerService instance used throughout the application.
- *
- * Most Flutry packages should use this instance instead of creating
- * their own logger.
- */
 const loggerInstance = new LoggerService();
 
-/**
- * Public Flutry logger.
- *
- * Provides a small, stable logging API without exposing Winston
- * implementation details to packages that only need normal logging.
- */
 export const logger: Logger = loggerInstance;
 
-/**
- * Exposes the underlying Winston logger for integrations that require
- * direct Winston access.
- */
 export const rawWinstonLogger = loggerInstance.raw;
 
-/**
- * Writable stream for HTTP logging middleware.
- */
 export const httpLogStream = loggerInstance.httpLogStream;

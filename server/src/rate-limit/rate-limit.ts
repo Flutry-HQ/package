@@ -36,7 +36,7 @@ export class RateLimit {
           const client = await this.getRedis();
           this.assertOpen();
           if (client.getConnectionStatus().status !== 'ready') {
-            await client.connect();
+            throw new Error('Redis is not ready after connection');
           }
         })());
         this.assertOpen();

@@ -11,49 +11,54 @@ interface SharedConnection {
   client: RedisClient;
   owners: Set<symbol>;
   owned: boolean;
+  ready: Promise<void>;
 }
 
 let connection: SharedConnection | undefined;
 let closing: Promise<void> | undefined;
 
 function loadClient(): RedisClient {
-  // Keep Redis optional at both compile time and runtime. Memory mode never calls this.
-  const loaded: unknown = require('@flutry/redis');
+  // Optional peer dependency: load only when Redis rate limiting is enabled.
+  let loaded: unknown;
+  try {
+    loaded = require('@flutry/redis');
+  } catch (error) {
+    throw new Error('Redis rate limiting requires @flutry/redis to be installed');
+  }
 
   if (!loaded || typeof loaded !== 'object' || !('redis' in loaded)) {
-    throw new Error('@flutry/redis does not export its redis singleton');
+    throw new Error('@flutry/redis must export the redis singleton');
   }
 
   const client = loaded.redis as Partial<RedisClient> | undefined;
+  if (!client) throw new Error('@flutry/redis exports an invalid redis singleton');
 
-  if (
-    !client ||
-    typeof client.connect !== 'function' ||
-    typeof client.disconnect !== 'function' ||
-    typeof client.getConnectionStatus !== 'function' ||
-    typeof client.consumeRateLimit !== 'function'
-  ) {
-    throw new Error('Install a version of @flutry/redis that supports consumeRateLimit');
+  for (const method of ['connect', 'disconnect', 'getConnectionStatus', 'consumeRateLimit'] as const) {
+    if (typeof client[method] !== 'function') {
+      throw new Error(`Installed @flutry/redis is incompatible: missing redis.${method}(). Update @flutry/redis and rebuild.`);
+    }
   }
-
   return client as RedisClient;
 }
 
 export async function acquireRedis(owner: symbol): Promise<RedisClient> {
-  while (closing) {
-    await closing;
-  }
+  while (closing) await closing;
 
   if (!connection) {
     const client = loadClient();
-    connection = { client, owners: new Set(), owned: client.getConnectionStatus().status === 'not_initialized' };
+    const owned = client.getConnectionStatus().status === 'not_initialized';
+    connection = {
+      client,
+      owners: new Set(),
+      owned,
+      ready: Promise.resolve().then(() => client.connect()),
+    };
   }
 
   const current = connection;
   current.owners.add(owner);
-
   try {
-    await current.client.connect();
+    await current.ready;
     return current.client;
   } catch (error) {
     await releaseRedis(owner);
@@ -63,17 +68,14 @@ export async function acquireRedis(owner: symbol): Promise<RedisClient> {
 
 export async function releaseRedis(owner: symbol): Promise<void> {
   const current = connection;
-
-  if (!current || !current.owners.delete(owner) || current.owners.size > 0) {
-    return;
-  }
+  if (!current || !current.owners.delete(owner) || current.owners.size > 0) return;
 
   connection = undefined;
-
-  // Leave connections established by application code under that application's ownership.
-  const operation = current.owned ? current.client.disconnect() : Promise.resolve();
+  const operation = (async () => {
+    await current.ready.catch(() => {});
+    if (current.owned) await current.client.disconnect();
+  })();
   closing = operation;
-
   try {
     await operation;
   } finally {

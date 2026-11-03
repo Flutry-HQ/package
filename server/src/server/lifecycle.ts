@@ -36,9 +36,8 @@ export function registerLifecycle(app: FastifyInstance, _options: HttpOptions): 
  * @param reply Fastify response instance.
  */
 async function onRequest(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const isDevelopment = process.env.NODE_ENV === 'development';
   const pathname = (request.raw.url ?? '/').split('?')[0];
-  const url = isDevelopment ? (request.raw.url ?? '/') : pathname;
+  const url = request.raw.url ?? '/';
 
   /**
    * Ignore browser favicon requests.

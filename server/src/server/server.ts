@@ -186,9 +186,7 @@ export class HttpServer {
      */
     const trustProxy = this.options.trustProxy ?? false;
 
-    logger.info('🛡️ Trust Proxy', {
-      value: typeof trustProxy === 'function' ? '[Function]' : trustProxy,
-    });
+    logger.info(`🛡️ Trust Proxy ${typeof trustProxy === 'function' ? '[Function]' : trustProxy}`);
 
     /**
      * Report the current Socket.IO state.

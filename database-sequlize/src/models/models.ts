@@ -172,14 +172,17 @@ export default class Models {
    */
   private async loadModel(filePath: string): Promise<void> {
     try {
-      const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
+      const module = await import(pathToFileURL(filePath).href);
 
-      const module = await dynamicImport(pathToFileURL(filePath).href);
+      let ModelClass = module.default;
 
-      const ModelClass = module.default;
+      // Handle CommonJS / ESM default export interoperability.
+      while (ModelClass && typeof ModelClass !== 'function' && typeof ModelClass.default !== 'undefined') {
+        ModelClass = ModelClass.default;
+      }
 
-      if (!ModelClass || typeof ModelClass.initialize !== 'function') {
-        throw new TypeError(`Model at ${filePath} must export a default class with an initialize() method.`);
+      if (typeof ModelClass !== 'function' || typeof ModelClass.initialize !== 'function') {
+        throw new TypeError(`Model at ${filePath} must export a default class with a static initialize() method.`);
       }
 
       await ModelClass.initialize(this.sequelize);
@@ -187,7 +190,6 @@ export default class Models {
       this.models[ModelClass.name] = ModelClass;
     } catch (error) {
       logger.error(`Failed to load model at ${filePath}`, error);
-
       throw error;
     }
   }

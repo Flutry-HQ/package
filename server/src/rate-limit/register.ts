@@ -29,15 +29,25 @@ export function registerRateLimit(app: FastifyInstance, options: HttpOptions): v
   }
   if (config.enabled !== true) return;
 
-  const exclusions = new Set(exclude);
   const socketPath = options.socket === false ? undefined : (options.socket?.path ?? '/socket.io').replace(/\/+$/, '');
+
   const limiter = new RateLimit({
     ...config,
     name: config.name ?? 'global',
     skip: async (ctx) => {
       const path = (ctx.req.raw.url ?? '/').split('?')[0];
 
-      if (exclusions.has(path) || (socketPath !== undefined && (path === socketPath || path === `${socketPath}/`))) {
+      const isExcluded = exclude.some((pattern) => {
+        if (pattern.endsWith('/*')) {
+          const prefix = pattern.slice(0, -2);
+
+          return path === prefix || path.startsWith(`${prefix}/`);
+        }
+
+        return path === pattern;
+      });
+
+      if (isExcluded || (socketPath !== undefined && (path === socketPath || path === `${socketPath}/`))) {
         return true;
       }
 
